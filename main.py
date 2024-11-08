@@ -100,13 +100,13 @@ def receive_photo(message):
             photo_buffer[user_id] = []
         photo_buffer[user_id].append({
             'file_id': message.photo[-1].file_id,
-            'caption': f"{user_data[user_id]['name']} отправил(а) фото"
+            'caption': f"{user_data[user_id]['name']} - страйк {user_data[user_id]['counter']} из 100"
         })
 
         current_count = user_data[user_id]['counter']
         total_strikes = user_data[user_id]['total_strikes']
         bot.send_message(user_id, f"Супер 👍 молодець 😎! +1\n"
-                                  f"Кількість страйків зараз: {current_count}\n"
+                                  f"Кількість страйків зараз: {current_count} из 100\n"
                                   f"Загальна кількість страйків: {total_strikes}")
     else:
         bot.send_message(user_id, "Введи /start, щоб розпочати.")
@@ -115,8 +115,7 @@ def send_hourly_statistics():
     stats_message = "Страйки усіх учасників:\n"
     for user_id, data in user_data.items():
         name = data['name'] if data['name'] else "Невідомий користувач"
-        strikes = data['counter']
-        stats_message += f"{name} - страйк {strikes}\n"
+        stats_message += f"{name} - страйк {data['counter']} из 100\n"
 
     bot.send_message(CHANNEL_ID, stats_message)
 
