@@ -1,17 +1,17 @@
 import telebot
 import json
-from telebot.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-API_TOKEN = '7338566190:AAGtOOMI8StYiU5HZ2vrkWY12QtIR6iL1n4'  # Замените на свой токен
-CHANNEL_ID = '-1002302094356'  # Замените на ID вашего канала
+API_TOKEN = '7338566190:AAGtOOMI8StYiU5HZ2vrkWY12QtIR6iL1n4'  # Замените на ваш токен
+CHANNEL_ID = '-1002302094356'  # Замените на ваш канал
+
 bot = telebot.TeleBot(API_TOKEN)
 scheduler = BackgroundScheduler()
 
-DATA_FILE = 'user_data.json'  # Имя файла для хранения данных
+DATA_FILE = 'user_data.json'  # Файл для хранения данных
 user_data = {}
-photo_buffer = {}  # Буфер для сохранения фотографий до конца часа
+photo_buffer = {}  # Буфер для фотографий
 
 # Загрузка данных из файла
 def load_data():
@@ -27,26 +27,19 @@ def save_data():
     with open(DATA_FILE, 'w') as file:
         json.dump(user_data, file)
 
-# Загружаем данные при запуске
+# Загружаем данные при старте
 load_data()
 
-# Создаем клавиатуру с кнопкой "Відправити фото"
-def get_photo_keyboard():
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("Відправити фото"))
-    return keyboard
-
-# Начальная команда /start
+# Стартовая команда /start
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     if user_id not in user_data:
-        user_data[user_id] = {'name': '', 'counter': 0, 'total_strikes': 0, 'has_sent_photo': False}
-        bot.send_message(user_id, "Ваше ім’я: 🍅", reply_markup=ReplyKeyboardRemove())
-        print(f"Старт: Инициализация пользователя {user_id}")
+        user_data[user_id] = {'name': '', 'counter': 0, 'has_sent_photo': False}
+        bot.send_message(user_id, "Ваше ім’я: 🍅")  # Убираем клавиатуру и просим имя
         save_data()
     else:
-        bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.", reply_markup=get_photo_keyboard())
+        bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.")
 
 # Установка имени пользователя
 @bot.message_handler(func=lambda message: message.from_user.id in user_data and user_data[message.from_user.id]['name'] == '')
@@ -54,80 +47,79 @@ def set_name(message):
     user_id = message.from_user.id
     user_data[user_id]['name'] = message.text
     save_data()
-    bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.", reply_markup=get_photo_keyboard())
+    bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.")
 
-# Обработка нажатия кнопки "Відправити фото"
-@bot.message_handler(func=lambda message: message.text == "Відправити фото")
-def prompt_photo(message):
-    user_id = message.from_user.id
-    if user_id in user_data and user_data[user_id]['name']:
-        bot.send_message(user_id, "Відправте своє фото сюди 📸")
-    else:
-        bot.send_message(user_id, "Нажмите 'Почнемо' для регистрации.")
+# Напоминания для определенного времени
+def send_reminder_1min():
+    for user_id in user_data:
+        if user_data[user_id]['name']:
+            bot.send_message(user_id, "Чекаю на твоє фото 😊")
 
-# Обработка отправки фото
+def send_reminder_30min():
+    for user_id in user_data:
+        if user_data[user_id]['name']:
+            bot.send_message(user_id, "Не забудь 😏")
+
+def send_reminder_50min():
+    for user_id in user_data:
+        if user_data[user_id]['name']:
+            bot.send_message(user_id, "Останній шанс 😢")
+
+# Стартуем планировщик для регулярных уведомлений
+scheduler.add_job(send_reminder_1min, CronTrigger(minute=1))  # 1-я минута каждого часа
+scheduler.add_job(send_reminder_30min, CronTrigger(minute=30))  # 30-я минута каждого часа
+scheduler.add_job(send_reminder_50min, CronTrigger(minute=50))  # 50-я минута каждого часа
+
+# Обработка фото
 @bot.message_handler(content_types=['photo'])
-def receive_photo(message):
+def handle_photo(message):
     user_id = message.from_user.id
     if user_id in user_data and user_data[user_id]['name']:
         user_data[user_id]['counter'] += 1
-        user_data[user_id]['total_strikes'] += 1
         user_data[user_id]['has_sent_photo'] = True
         save_data()
-
-        # Сохранение фото в буфер
+        bot.send_message(user_id, f"Супер 👍 молодець 😎\nСтрайк {user_data[user_id]['counter']} з 100")
         if user_id not in photo_buffer:
             photo_buffer[user_id] = []
-        photo_buffer[user_id].append({
-            'file_id': message.photo[-1].file_id,
-            'caption': f"{user_data[user_id]['name']} - страйк {user_data[user_id]['counter']} из 100"
-        })
-
-        # Сообщение о текущем количестве страйков
-        current_count = user_data[user_id]['counter']
-        total_strikes = user_data[user_id]['total_strikes']
-        bot.send_message(user_id, f"Супер 👍 молодець 😎! +1\n"
-                                  f"Кількість страйків зараз: {current_count} з 100\n"
-                                  f"Загальна кількість страйків: {total_strikes}")
+        # Сохранение фотографии в буфер
+        photo_buffer[user_id].append(message.photo[-1].file_id)
     else:
         bot.send_message(user_id, "Нажмите 'Почнемо' для регистрации.")
 
-def send_hourly_statistics():
+# Функция для сброса счетчика, если пользователь не отправил фото в течение дня
+def reset_counter(user_id):
+    user_data[user_id]['counter'] = 0
+    user_data[user_id]['has_sent_photo'] = False
+    save_data()
+    bot.send_message(user_id, f"Ну ти і помідорка, {user_data[user_id]['name']} 🍅")
+
+# Ежечасный сброс и отправка статистики
+def send_hourly_stats():
     stats_message = "Страйки усіх учасників:\n"
     for user_id, data in user_data.items():
         name = data['name'] if data['name'] else "Невідомий користувач"
-        stats_message += f"{name} - страйк {data['counter']} из 100\n"
+        stats_message += f"{name} - страйк {data['counter']} з 100\n"
 
+    # Отправляем статистику в канал
     bot.send_message(CHANNEL_ID, stats_message)
 
+    # Отправляем все фотографии в канал
     for user_id, photos in photo_buffer.items():
         for photo in photos:
-            bot.send_photo(CHANNEL_ID, photo['file_id'], caption=photo['caption'])
+            bot.send_photo(CHANNEL_ID, photo)
 
+    # Очищаем буфер фотографий после отправки
     photo_buffer.clear()
 
-# Планируем отправку статистики каждый час
-scheduler.add_job(send_hourly_statistics, CronTrigger(minute="0,30,50", hour="*"))
+# Проверка и отправка статистики каждый час
+def check_and_send_hourly_stats():
+    send_hourly_stats()
 
-# Функция сброса счетчика для пользователей, не отправивших фото
-def reset_counter(user_id):
-    name = user_data[user_id]['name']
-    user_data[user_id]['counter'] = 0
-    user_data[user_id]['has_sent_photo'] = False
-    bot.send_message(user_id, f"Ну ти і помідорка, {name} 🍅")
+# Запланировать задачи для сброса и отправки статистики каждый час
+scheduler.add_job(check_and_send_hourly_stats, CronTrigger(minute=50, hour='*'))  # Отправляем статистику в конце часа
 
-# Проверка и сброс счетчиков каждый час
-def check_and_reset_counters():
-    for user_id, data in user_data.items():
-        if not data['has_sent_photo']:  # Если пользователь не отправил фото
-            reset_counter(user_id)
-        else:
-            data['counter'] = 0  # Сбрасываем счетчик для следующего часа
-            data['has_sent_photo'] = False
-    save_data()
-
-scheduler.add_job(check_and_reset_counters, CronTrigger(minute=0, hour='*'))
-
-# Запуск планировщика и бота
+# Запуск планировщика
 scheduler.start()
+
+# Запуск бота
 bot.polling()
