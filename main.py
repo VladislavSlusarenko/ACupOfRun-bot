@@ -90,7 +90,7 @@ def receive_photo(message):
         current_count = user_data[user_id]['counter']
         total_strikes = user_data[user_id]['total_strikes']
         bot.send_message(user_id, f"Супер 👍 молодець 😎! +1\n"
-                                  f"Кількість страйків зараз: {current_count} из 100\n"
+                                  f"Кількість страйків зараз: {current_count} з 100\n"
                                   f"Загальна кількість страйків: {total_strikes}")
     else:
         bot.send_message(user_id, "Нажмите 'Почнемо' для регистрации.")
