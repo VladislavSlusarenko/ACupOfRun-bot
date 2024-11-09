@@ -5,6 +5,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 API_TOKEN = '7338566190:AAGtOOMI8StYiU5HZ2vrkWY12QtIR6iL1n4'  # Замените на ваш токен
 CHANNEL_ID = '-1002302094356'  # Замените на ваш канал
+PRIVATE_CHANNEL_ID = '-1001234567890'  # Замените на ID вашего закрытого канала
 
 bot = telebot.TeleBot(API_TOKEN)
 scheduler = BackgroundScheduler()
@@ -51,6 +52,7 @@ def set_name(message):
 
 # Напоминания для определенного времени
 def send_reminder_1min():
+    bot.send_message(PRIVATE_CHANNEL_ID, "Доброго ранку!")  # Отправляем "Доброго ранку!" в закрытый канал
     for user_id in user_data:
         if user_data[user_id]['name']:
             bot.send_message(user_id, "Чекаю на твоє фото 😊")
@@ -100,13 +102,15 @@ def send_hourly_stats():
         name = data['name'] if data['name'] else "Невідомий користувач"
         stats_message += f"{name} - страйк {data['counter']} з 100\n"
 
-    # Отправляем статистику в канал
-    bot.send_message(CHANNEL_ID, stats_message)
+    # Отправляем статистику в закрытый канал
+    bot.send_message(PRIVATE_CHANNEL_ID, stats_message)
 
-    # Отправляем все фотографии в канал
+    # Отправляем все фотографии в закрытый канал
     for user_id, photos in photo_buffer.items():
         for photo in photos:
-            bot.send_photo(CHANNEL_ID, photo)
+            user_name = user_data[user_id]['name'] if user_id in user_data else "Невідомий користувач"
+            bot.send_message(PRIVATE_CHANNEL_ID, f"Фото від {user_name}:")
+            bot.send_photo(PRIVATE_CHANNEL_ID, photo)
 
     # Очищаем буфер фотографий после отправки
     photo_buffer.clear()
@@ -116,7 +120,7 @@ def check_and_send_hourly_stats():
     send_hourly_stats()
 
 # Запланировать задачи для сброса и отправки статистики каждый час
-scheduler.add_job(check_and_send_hourly_stats, CronTrigger(minute=50, hour='*'))  # Отправляем статистику в конце часа
+scheduler.add_job(check_and_send_hourly_stats, CronTrigger(minute=59, hour='*'))  # Отправляем статистику в конце часа
 
 # Запуск планировщика
 scheduler.start()
