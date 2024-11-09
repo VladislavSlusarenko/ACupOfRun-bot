@@ -40,14 +40,12 @@ def get_photo_keyboard():
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    # Проверяем, зарегистрирован ли уже пользователь
     if user_id not in user_data:
         user_data[user_id] = {'name': '', 'counter': 0, 'total_strikes': 0, 'has_sent_photo': False}
         bot.send_message(user_id, "Ваше ім’я: 🍅", reply_markup=ReplyKeyboardRemove())
         print(f"Старт: Инициализация пользователя {user_id}")
         save_data()
     else:
-        # Если пользователь уже зарегистрирован, показываем кнопку "Відправити фото"
         bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.", reply_markup=get_photo_keyboard())
 
 # Установка имени пользователя
@@ -56,9 +54,8 @@ def set_name(message):
     user_id = message.from_user.id
     user_data[user_id]['name'] = message.text
     save_data()
+    bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.", reply_markup=get_photo_keyboard())
 
-    # Убираем строку ввода и показываем только кнопку "Відправити фото"
-    bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}🍅! Тепер я буду чекати на твоє фото.", reply_markup=ReplyKeyboardRemove())  # Убираем клавиатуру
 # Обработка нажатия кнопки "Відправити фото"
 @bot.message_handler(func=lambda message: message.text == "Відправити фото")
 def prompt_photo(message):
@@ -110,7 +107,7 @@ def send_hourly_statistics():
     photo_buffer.clear()
 
 # Планируем отправку статистики каждый час
-scheduler.add_job(send_hourly_statistics, CronTrigger(minute=0, hour='*'))
+scheduler.add_job(send_hourly_statistics, CronTrigger(minute="0,30,50", hour="*"))
 
 # Функция сброса счетчика для пользователей, не отправивших фото
 def reset_counter(user_id):
@@ -118,9 +115,6 @@ def reset_counter(user_id):
     user_data[user_id]['counter'] = 0
     user_data[user_id]['has_sent_photo'] = False
     bot.send_message(user_id, f"Ну ти і помідорка, {name} 🍅")
-
-    # Возвращаем кнопку "Відправити фото" после сброса
-    bot.send_message(user_id, "Тепер відправляй своє фото знову 📸", reply_markup=get_photo_keyboard())
 
 # Проверка и сброс счетчиков каждый час
 def check_and_reset_counters():
@@ -130,8 +124,6 @@ def check_and_reset_counters():
         else:
             data['counter'] = 0  # Сбрасываем счетчик для следующего часа
             data['has_sent_photo'] = False
-            # Возвращаем кнопку "Відправити фото" после сброса
-            bot.send_message(user_id, "Тепер відправляй своє фото знову 📸", reply_markup=get_photo_keyboard())
     save_data()
 
 scheduler.add_job(check_and_reset_counters, CronTrigger(minute=0, hour='*'))
