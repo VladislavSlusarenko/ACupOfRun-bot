@@ -53,28 +53,21 @@ def set_name(message):
 def send_good_morning():
     bot.send_message(CHANNEL_ID , "Доброго ранку!")
 
+# Напоминания
 def send_reminder_1min():
     for user_id in user_data:
-        if user_data[user_id]['name']:  # Проверяем, зарегистрирован ли пользователь
+        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:  # Проверяем, отправил ли пользователь фото
             bot.send_message(user_id, "Чекаю на твоє фото 😊")
-
 
 def send_reminder_30min():
     for user_id in user_data:
-        if user_data[user_id]['name']:
+        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:  # Проверяем, отправил ли пользователь фото
             bot.send_message(user_id, "Не забудь 😏")
 
 def send_reminder_50min():
     for user_id in user_data:
-        if user_data[user_id]['name']:
+        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:  # Проверяем, отправил ли пользователь фото
             bot.send_message(user_id, "Останній шанс 😢")
-
-scheduler.add_job(send_good_morning, CronTrigger(minute=0, hour='*'))
-
-# Стартуем планировщик для регулярных уведомлений
-scheduler.add_job(send_reminder_1min, CronTrigger(minute=1))   # 1-я минута каждого часа
-scheduler.add_job(send_reminder_30min, CronTrigger(minute=30)) # 30-я минута каждого часа
-scheduler.add_job(send_reminder_50min, CronTrigger(minute=50)) # 50-я минута каждого часа
 
 # Обработка фото
 @bot.message_handler(content_types=['photo'])
@@ -82,7 +75,7 @@ def handle_photo(message):
     user_id = message.from_user.id
     if user_id in user_data and user_data[user_id]['name']:
         user_data[user_id]['counter'] += 1
-        user_data[user_id]['has_sent_photo'] = True
+        user_data[user_id]['has_sent_photo'] = True  # Устанавливаем, что пользователь отправил фото
         save_data()
         bot.send_message(user_id, f"Супер 👍 молодець 😎\nСтрайк {user_data[user_id]['counter']} з 100")
         if user_id not in photo_buffer:
@@ -92,38 +85,49 @@ def handle_photo(message):
     else:
         bot.send_message(user_id, "Нажмите '/start' для регистрации.")
 
-# Функция для сброса счетчика, если пользователь не отправил фото в течение дня
-def reset_counter(user_id):
-    user_data[user_id]['counter'] = 0
-    user_data[user_id]['has_sent_photo'] = False
-    save_data()
-    bot.send_message(user_id, f"Ну ти і помідорка, {user_data[user_id]['name']} 🍅")
+# Запланированные задачи
+scheduler.add_job(send_good_morning, CronTrigger(minute=0, hour='*'))  # Каждую ночь отправляем "Доброго ранку!"
 
-# Ежечасная отправка статистики
-def send_hourly_stats():
-    registered_count = sum(1 for data in user_data.values() if data['name'])
-    stats_message = f"Статистика:\nЗарегистрированных участников: {registered_count}\n"
+# Стартуем планировщик для регулярных уведомлений
+scheduler.add_job(send_reminder_1min, CronTrigger(minute=1))   # 1-я минута каждого часа
+scheduler.add_job(send_reminder_30min, CronTrigger(minute=30)) # 30-я минута каждого часа
+scheduler.add_job(send_reminder_50min, CronTrigger(minute=50)) # 50-я минута каждого часа
+
+# Функция для сброса напоминаний
+def reset_reminders():
+    for user_id in user_data:
+        user_data[user_id]['has_sent_photo'] = False  # Сбрасываем флаг, чтобы напоминания начали отправляться заново
+    save_data()
+
+# Запланировать сброс флагов напоминаний каждый день
+scheduler.add_job(reset_reminders, CronTrigger(hour=0, minute=0))  # Каждый день в 00:00 сбрасываем флаги
+
+# Функция для отправки статистики и фотографий с подписями в конце каждого часа
+def send_grouped_stats_and_photos_hourly():
+    # Формируем статистику
+    stats_message = "Статистика страйков: \n"
     for user_id, data in user_data.items():
         name = data['name'] if data['name'] else "Невідомий користувач"
         stats_message += f"{name} - страйк {data['counter']} з 100\n"
         if data['counter'] == 0:
             stats_message += f"{name} -  помідорка 🍅\n"
 
-    # Отправляем статистику в закрытый канал
-    bot.send_message(CHANNEL_ID , stats_message)
+    # Отправляем статистику в канал
+    bot.send_message(CHANNEL_ID, stats_message)
 
-    # Отправляем все фотографии в закрытый канал
+    # Формируем список сообщений с фотографиями
     for user_id, photos in photo_buffer.items():
         for photo in photos:
             user_name = user_data[user_id]['name'] if user_id in user_data else "Невідомий користувач"
-            bot.send_message(CHANNEL_ID , f"{user_name} - страйк {user_data[user_id]['counter']} з 100")
-            bot.send_photo(CHANNEL_ID , photo)
+            # Отправляем каждую фотографию с подписью
+            photo_caption = f"Фотографія від {user_name} - страйк {user_data[user_id]['counter']} з 100"
+            bot.send_photo(CHANNEL_ID, photo, caption=photo_caption)
 
     # Очищаем буфер фотографий после отправки
     photo_buffer.clear()
 
 # Запланировать задачи для сброса и отправки статистики каждый час
-scheduler.add_job(send_hourly_stats, CronTrigger(hour='*', minute=59))  # Отправляем статистику в конце часа
+scheduler.add_job(send_grouped_stats_and_photos_hourly, CronTrigger(minute=59))  # В 59-ю минуту каждого часа
 
 # Запуск планировщика
 scheduler.start()
