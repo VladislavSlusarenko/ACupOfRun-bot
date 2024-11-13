@@ -1,124 +1,79 @@
-import telebot
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 import os
 from telebot import types
+from config import API_TOKEN, CHANNEL_ID, ADMIN_ID
+print(API_TOKEN)  # Проверяем правильность импорта
+print(CHANNEL_ID)
+print(ADMIN_ID)
+scheduler = BackgroundScheduler()
 
-API_TOKEN = '7338566190:AAGtOOMI8StYiU5HZ2vrkWY12QtIR6iL1n4'  # Замените на ваш API токен
-CHANNEL_ID = '-1002302094356'  # Замените на ваш канал
-bot = telebot.TeleBot(API_TOKEN)
+video_storage_path = "videos/"  # Папка для хранения видео
+if not os.path.exists(video_storage_path):
+    os.makedirs(video_storage_path)
 
-# Список администраторов
-ADMIN_IDS = [922094773,  1166978466]  # Замените на реальные ID администраторов
+video_schedule = {}  # Словарь для хранения привязок видео к дням
 
-# Словарь для хранения информации о видео
-videos = {
-    "Понеділок": None,
-    "Вівторок": None,
-    "Середа": None,
-    "Четвер": None,
-    "П’ятниця": None,
-    "Субота": None,
-    "Неділя": None
-}
+# Функция для отправки "Доброго ранку!" и видео в канал
+def send_good_morning(bot, channel_id):
+    current_day = get_current_day()
+    if current_day in video_schedule:
+        try:
+            bot.send_video(channel_id, video=open(video_schedule[current_day], 'rb'))
+        except Exception as e:
+            bot.send_message(channel_id, f"Ошибка при отправке видео: {e}")
+    bot.send_message(channel_id, "Доброго ранку!")
 
-# Стартовая команда /start
-@bot.message_handler(commands=['admin'])
-def start(message):
-    user_id = message.from_user.id
-    
-    if user_id in ADMIN_IDS:  # Проверка, является ли пользователь администратором
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add('Бот', 'Адмін')  # Админ видит две кнопки: "Бот" и "Адмін"
-        bot.send_message(user_id, "Привет, выбери: Бот или Адмін", reply_markup=markup)
-    else:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add('Бот')  # Обычный пользователь видит только кнопку "Бот"
-        bot.send_message(user_id, "Привет, выбери: Бот", reply_markup=markup)
+# Уведомления
+def send_reminder_1min(bot, user_data):
+    for user_id in user_data:
+        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:
+            bot.send_message(user_id, "Чекаю на твоє фото 😊")
 
-# Обработка кнопки "Адмін"
-@bot.message_handler(func=lambda message: message.text == "Адмін")
-def admin_menu(message):
-    user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        bot.send_message(user_id, "У вас нет прав доступа к админ-меню.")
-        return
-    
-    # Если пользователь администратор, показываем меню админа
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('Понеділок', 'Вівторок', 'Середа', 'Четвер', 'П’ятниця', 'Субота', 'Неділя')
-    bot.send_message(user_id, "Выберите день недели для загрузки видео", reply_markup=markup)
+def send_reminder_30min(bot, user_data):
+    for user_id in user_data:
+        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:
+            bot.send_message(user_id, "Не забудь 😏")
 
-# Обработка выбора дня недели
-@bot.message_handler(func=lambda message: message.text in ["Понеділок", "Вівторок", "Середа", "Четвер", "П’ятниця", "Субота", "Неділя"])
-def select_day(message):
-    user_id = message.from_user.id
-    day = message.text
-    
-    if user_id not in ADMIN_IDS:
-        bot.send_message(user_id, "У вас нет прав доступа.")
-        return
+def send_reminder_50min(bot, user_data):
+    for user_id in user_data:
+        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:
+            bot.send_message(user_id, "Останній шанс 😢")
 
-    # Проверяем, есть ли уже видео для выбранного дня
-    if videos[day] is not None:
-        bot.send_message(user_id, f"Видео для дня {day} уже загружено. Хотите заменить?", reply_markup=create_yes_no_markup(day))
-    else:
-        bot.send_message(user_id, f"Чекаю відео для дня {day}. Отправьте видео.")
+# Сброс напоминаний
+def reset_reminders(user_data):
+    for user_id in user_data:
+        user_data[user_id]['has_sent_photo'] = False
 
-# Создаем клавиатуру для замены видео
-def create_yes_no_markup(day):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('Да', 'Нет')
-    return markup
+# Команда админа для загрузки видео
+def handle_admin_commands(bot, message, channel_id):
+    markup = types.ReplyKeyboardMarkup(one_time_keyboard=True)
+    for i in range(1, 8):
+        markup.add(types.KeyboardButton(f"Загрузить видео для дня {i}"))
+    bot.send_message(message.chat.id, "Выберите номер дня для загрузки видео", reply_markup=markup)
 
-# Обработка кнопок "Да" или "Нет"
-@bot.message_handler(func=lambda message: message.text in ["Да", "Нет"])
-def replace_video(message):
-    user_id = message.from_user.id
-    day = message.text  # День для замены видео
-    if message.text == "Да":
-        bot.send_message(user_id, f"Отправьте новое видео для дня {day}")
-    else:
-        # Возвращаем к выбору дня
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add('Понеділок', 'Вівторок', 'Середа', 'Четвер', 'П’ятниця', 'Субота', 'Неділя')
-        bot.send_message(user_id, "Выберите день недели для загрузки видео", reply_markup=markup)
+    @bot.message_handler(content_types=['video'])
+    def receive_video(video_message):
+        try:
+            day_number = int(video_message.text.split()[-1])  # Парсим номер дня
+        except ValueError:
+            bot.send_message(message.chat.id, "Неверный формат видео. Попробуйте снова.")
+            return
+        
+        file_path = os.path.join(video_storage_path, f"day_{day_number}.mp4")
+        
+        # Сохранение видео на файловую систему
+        file_info = bot.get_file(video_message.video.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        try:
+            with open(file_path, "wb") as f:
+                f.write(downloaded_file)
+            video_schedule[day_number] = file_path  # Добавляем в расписание
+            bot.send_message(video_message.chat.id, f"Видео для дня {day_number} сохранено.")
+            bot.send_message(video_message.chat.id, f"Сейчас выгружено {len(video_schedule)} видео из 7.")
+        except Exception as e:
+            bot.send_message(message.chat.id, f"Ошибка при сохранении видео: {e}")
 
-# Обработка видео от админа
-@bot.message_handler(content_types=['video'])
-def handle_video(message):
-    user_id = message.from_user.id
-    day = None
-    
-    # Проверяем, для какого дня видео отправляется
-    for selected_day in ["Понеділок", "Вівторок", "Середа", "Четвер", "П’ятниця", "Субота", "Неділя"]:
-        if selected_day in message.caption:
-            day = selected_day
-            break
-    
-    if day is None:
-        bot.send_message(user_id, "Видео не связано с днем недели. Пожалуйста, укажите день.")
-        return
-
-    if user_id not in ADMIN_IDS:
-        bot.send_message(user_id, "У вас нет прав доступа.")
-        return
-
-    # Сохранение видео на сервере или файловой системе
-    file_info = bot.get_file(message.video.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    video_path = f'./videos/{day}.mp4'
-    with open(video_path, 'wb') as new_video:
-        new_video.write(downloaded_file)
-
-    # Сохраняем информацию о видео
-    videos[day] = video_path
-
-    # Отправляем видео в канал
-    bot.send_video(chat_id=CHANNEL_ID, video=open(video_path, 'rb'), caption=f"Доброго ранку! Відео для {day}")
-
-    # Очищаем клавиатуру
-    markup = types.ReplyKeyboardRemove()
-    bot.send_message(user_id, f"Видео для дня {day} успешно загружено.", reply_markup=markup)
-
-# Запуск бота
-bot.polling()
+def get_current_day():
+    from datetime import datetime
+    return datetime.now().weekday() + 1
