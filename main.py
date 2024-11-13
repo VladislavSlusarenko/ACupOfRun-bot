@@ -1,16 +1,15 @@
+import sys
+print(sys.path)
 import telebot
 import json
-from apscheduler.schedulers.background import BackgroundScheduler
+from config import API_TOKEN, CHANNEL_ID, ADMIN_ID
 from apscheduler.triggers.cron import CronTrigger
-from telebot import types
-from admin import handle_admin_commands 
-API_TOKEN = '7338566190:AAGtOOMI8StYiU5HZ2vrkWY12QtIR6iL1n4'  # Замените на ваш токен
-CHANNEL_ID = '-1002302094356'  # Замените на ваш канал
-ADMIN_IDS = [922094773,  1166978466]
+from admin import (
+    scheduler, send_good_morning, send_reminder_1min, send_reminder_30min,
+    send_reminder_50min, reset_reminders, handle_admin_commands
+)
 
 bot = telebot.TeleBot(API_TOKEN)
-scheduler = BackgroundScheduler()
-
 DATA_FILE = 'user_data.json'  # Файл для хранения данных
 user_data = {}
 photo_buffer = {}  # Буфер для фотографий
@@ -32,30 +31,33 @@ def save_data():
 # Автоматическое сохранение данных после каждого действия
 load_data()
 
-
 # Стартовая команда /start
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    
-    if user_id in ADMIN_IDS:  # Проверка, является ли пользователь администратором
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add('Бот', 'Адмін')  # Админ видит две кнопки: "Бот" и "Адмін"
-        bot.send_message(user_id, "Привет, выбери: Бот или Адмін", reply_markup=markup)
+    if user_id not in user_data:
+        user_data[user_id] = {'name': '', 'counter': 0, 'has_sent_photo': False}
+        bot.send_message(user_id, "Ваше ім’я: 🍅")
+        save_data()
     else:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add('Бот')  # Обычный пользователь видит только кнопку "Бот"
-        bot.send_message(user_id, "Привет, выбери: Бот", reply_markup=markup)
+        bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.")
+    
+    # Проверка на права администратора
+    if user_id == ADMIN_ID:
+        markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(telebot.types.KeyboardButton("Администратор"))
+        bot.send_message(user_id, "Панель администратора активирована.", reply_markup=markup)
 
-# Обработка кнопки "Адмін"
-@bot.message_handler(func=lambda message: message.text == "Адмін")
-def admin_menu(message):
-    user_id = message.from_user.id
-    if user_id not in ADMIN_IDS:
-        bot.send_message(user_id, "У вас нет прав доступа к админ-меню.")
-        return
+# Обработка нажатия на кнопку "Администратор"
+@bot.message_handler(func=lambda message: message.text == "Администратор" and message.from_user.id == ADMIN_ID)
+def admin_panel(message):
+    bot.send_message(message.chat.id, "Введите /admin для загрузки видео.")
 
-    handle_admin_commands(message)  # Переходим к обработке админского меню из admin.py
+# Обработка команды /admin для загрузки видео
+@bot.message_handler(commands=['admin'])
+def admin_command(message):
+    if message.from_user.id == ADMIN_ID:
+        handle_admin_commands(bot, message, CHANNEL_ID)
 
 # Установка имени пользователя
 @bot.message_handler(func=lambda message: message.from_user.id in user_data and user_data[message.from_user.id]['name'] == '')
@@ -65,89 +67,23 @@ def set_name(message):
     save_data()
     bot.send_message(user_id, f"Привіт, {user_data[user_id]['name']}! Тепер я буду чекати на твоє фото.")
 
-# Функция для отправки "Доброго ранку!" в канал
-def send_good_morning():
-    bot.send_message(CHANNEL_ID , "Доброго ранку!")
-
-# Напоминания
-def send_reminder_1min():
-    for user_id in user_data:
-        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:  # Проверяем, отправил ли пользователь фото
-            bot.send_message(user_id, "Чекаю на твоє фото 😊")
-
-def send_reminder_30min():
-    for user_id in user_data:
-        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:  # Проверяем, отправил ли пользователь фото
-            bot.send_message(user_id, "Не забудь 😏")
-
-def send_reminder_50min():
-    for user_id in user_data:
-        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:  # Проверяем, отправил ли пользователь фото
-            bot.send_message(user_id, "Останній шанс 😢")
-
 # Обработка фото
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.from_user.id
     if user_id in user_data and user_data[user_id]['name']:
         user_data[user_id]['counter'] += 1
-        user_data[user_id]['has_sent_photo'] = True  # Устанавливаем, что пользователь отправил фото
+        user_data[user_id]['has_sent_photo'] = True
         save_data()
         bot.send_message(user_id, f"Супер 👍 молодець 😎\nСтрайк {user_data[user_id]['counter']} з 100")
         if user_id not in photo_buffer:
             photo_buffer[user_id] = []
-        # Сохранение фотографии в буфер
         photo_buffer[user_id].append(message.photo[-1].file_id)
     else:
         bot.send_message(user_id, "Нажмите '/start' для регистрации.")
 
-# Запланированные задачи
-scheduler.add_job(send_good_morning, CronTrigger(minute=0, hour='*'))  # Каждую ночь отправляем "Доброго ранку!"
-
-# Стартуем планировщик для регулярных уведомлений
-scheduler.add_job(send_reminder_1min, CronTrigger(minute=1))   # 1-я минута каждого часа
-scheduler.add_job(send_reminder_30min, CronTrigger(minute=30)) # 30-я минута каждого часа
-scheduler.add_job(send_reminder_50min, CronTrigger(minute=50)) # 50-я минута каждого часа
-
-# Функция для сброса напоминаний
-def reset_reminders():
-    for user_id in user_data:
-        user_data[user_id]['has_sent_photo'] = False  # Сбрасываем флаг, чтобы напоминания начали отправляться заново
-    save_data()
-
-
-# Запланировать сброс флагов напоминаний каждый день
-scheduler.add_job(reset_reminders, CronTrigger(hour=0, minute=0))  # Каждый день в 00:00 сбрасываем флаги
-
-# Функция для отправки статистики и фотографий с подписями в конце каждого часа
-def send_grouped_stats_and_photos_hourly():
-    # Формируем статистику
-    stats_message = "Статистика страйков: \n"
-    for user_id, data in user_data.items():
-        name = data['name'] if data['name'] else "Невідомий користувач"
-        stats_message += f"{name} - страйк {data['counter']} з 100\n"
-        if data['counter'] == 0:
-            stats_message += f"{name} -  помідорка 🍅\n"
-
-    # Отправляем статистику в канал
-    bot.send_message(CHANNEL_ID, stats_message)
-
-    # Формируем список сообщений с фотографиями
-    for user_id, photos in photo_buffer.items():
-        for photo in photos:
-            user_name = user_data[user_id]['name'] if user_id in user_data else "Невідомий користувач"
-            # Отправляем каждую фотографию с подписью
-            photo_caption = f"Фотографія від {user_name} - страйк {user_data[user_id]['counter']} з 100"
-            bot.send_photo(CHANNEL_ID, photo, caption=photo_caption)
-
-    # Очищаем буфер фотографий после отправки
-    photo_buffer.clear()
-
-# Запланировать задачи для сброса и отправки статистики каждый час
-scheduler.add_job(send_grouped_stats_and_photos_hourly, CronTrigger(minute=59))  # В 59-ю минуту каждого часа
-
-# Запуск планировщика
+scheduler.add_job(lambda: send_good_morning(bot, CHANNEL_ID), CronTrigger(minute=0, hour='*'))
 scheduler.start()
 
-# Запуск бота
 bot.polling()
+
