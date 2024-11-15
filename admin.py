@@ -1,79 +1,81 @@
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+import telebot
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 import os
-from telebot import types
-from config import API_TOKEN, CHANNEL_ID, ADMIN_ID
-print(API_TOKEN)  # Проверяем правильность импорта
-print(CHANNEL_ID)
-print(ADMIN_ID)
-scheduler = BackgroundScheduler()
 
-video_storage_path = "videos/"  # Папка для хранения видео
-if not os.path.exists(video_storage_path):
-    os.makedirs(video_storage_path)
+API_TOKEN = '7338566190:AAGtOOMI8StYiU5HZ2vrkWY12QtIR6iL1n4'  # Замените на ваш токен
+CHANNEL_ID = '-1002302094356'  # Замените на ваш канал
+ADMIN_ID = 378578202 # Замените на ID вашего администратора
 
-video_schedule = {}  # Словарь для хранения привязок видео к дням
+bot = telebot.TeleBot(API_TOKEN)
 
-# Функция для отправки "Доброго ранку!" и видео в канал
-def send_good_morning(bot, channel_id):
-    current_day = get_current_day()
-    if current_day in video_schedule:
-        try:
-            bot.send_video(channel_id, video=open(video_schedule[current_day], 'rb'))
-        except Exception as e:
-            bot.send_message(channel_id, f"Ошибка при отправке видео: {e}")
-    bot.send_message(channel_id, "Доброго ранку!")
+VIDEO_FOLDER = 'videos/'  # Папка для хранения видео
 
-# Уведомления
-def send_reminder_1min(bot, user_data):
-    for user_id in user_data:
-        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:
-            bot.send_message(user_id, "Чекаю на твоє фото 😊")
+# Создаем папку для видео, если её нет
+if not os.path.exists(VIDEO_FOLDER):
+    os.makedirs(VIDEO_FOLDER)
 
-def send_reminder_30min(bot, user_data):
-    for user_id in user_data:
-        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:
-            bot.send_message(user_id, "Не забудь 😏")
+# Храним видео для каждого дня
+videos = {i: None for i in range(1, 8)}  # Дни от 1 до 7
 
-def send_reminder_50min(bot, user_data):
-    for user_id in user_data:
-        if user_data[user_id]['name'] and not user_data[user_id]['has_sent_photo']:
-            bot.send_message(user_id, "Останній шанс 😢")
+# Стартовая команда /start
+@bot.message_handler(commands=['start'])
+def start(message):
+    if message.from_user.id == ADMIN_ID:
+        # Если пользователь администратор, отправляем сообщение и кнопку для панели администратора
+        bot.send_message(message.chat.id, "Привіт, Адміністратор! Тепер ви можете керувати завантаженням відео.")
+        bot.send_message(message.chat.id, "Натисніть '/admin', щоб увійти в панель адміністратора.")
+    else:
+        # Если пользователь не администратор
+        bot.send_message(message.chat.id, f"Привіт, {message.from_user.first_name}! Напишіть '/admin', щоб стати адміністратором.")
 
-# Сброс напоминаний
-def reset_reminders(user_data):
-    for user_id in user_data:
-        user_data[user_id]['has_sent_photo'] = False
-
-# Команда админа для загрузки видео
-def handle_admin_commands(bot, message, channel_id):
-    markup = types.ReplyKeyboardMarkup(one_time_keyboard=True)
-    for i in range(1, 8):
-        markup.add(types.KeyboardButton(f"Загрузить видео для дня {i}"))
-    bot.send_message(message.chat.id, "Выберите номер дня для загрузки видео", reply_markup=markup)
-
-    @bot.message_handler(content_types=['video'])
-    def receive_video(video_message):
-        try:
-            day_number = int(video_message.text.split()[-1])  # Парсим номер дня
-        except ValueError:
-            bot.send_message(message.chat.id, "Неверный формат видео. Попробуйте снова.")
-            return
+# Обработчик команды /admin для администратора
+@bot.message_handler(commands=['admin'])
+def admin(message):
+    if message.from_user.id == ADMIN_ID:
+        # Если пользователь администратор, выводим панель
+        bot.send_message(message.chat.id, "Ви є адміністратором. Ось панель управління.")
         
-        file_path = os.path.join(video_storage_path, f"day_{day_number}.mp4")
+        # Показываем количество загруженных видео
+        uploaded_videos = sum(1 for v in videos.values() if v is not None)
+        bot.send_message(message.chat.id, f"Зараз завантажено відео: {uploaded_videos}/7")
         
-        # Сохранение видео на файловую систему
-        file_info = bot.get_file(video_message.video.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        try:
-            with open(file_path, "wb") as f:
-                f.write(downloaded_file)
-            video_schedule[day_number] = file_path  # Добавляем в расписание
-            bot.send_message(video_message.chat.id, f"Видео для дня {day_number} сохранено.")
-            bot.send_message(video_message.chat.id, f"Сейчас выгружено {len(video_schedule)} видео из 7.")
-        except Exception as e:
-            bot.send_message(message.chat.id, f"Ошибка при сохранении видео: {e}")
+        bot.send_message(message.chat.id, "Виберіть номер дня для завантаження відео (від 1 до 7).")
+    else:
+        bot.send_message(message.chat.id, "У вас немає доступу до цієї команди.")
 
-def get_current_day():
-    from datetime import datetime
-    return datetime.now().weekday() + 1
+# Обработка ввода номера дня
+@bot.message_handler(func=lambda message: message.text.isdigit() and 1 <= int(message.text) <= 7)
+def choose_day(message):
+    day = int(message.text)
+    bot.send_message(message.chat.id, f"Чекаю відео для дня #{day}. Надішліть відео.")
+    bot.register_next_step_handler(message, handle_video_upload, day)
+
+# Обработка загрузки видео
+@bot.message_handler(content_types=['video'])
+def handle_video_upload(message, day):
+    if message.from_user.id == ADMIN_ID:
+        # Сохраняем видео
+        video_file_id = message.video.file_id
+        video_file = bot.get_file(video_file_id)
+        downloaded_video = bot.download_file(video_file.file_path)
+        
+        # Сохраняем видео на диск
+        video_path = os.path.join(VIDEO_FOLDER, f"day_{day}.mp4")
+        with open(video_path, 'wb') as new_video:
+            new_video.write(downloaded_video)
+        
+        # Сохраняем информацию о видео
+        videos[day] = video_path
+        bot.send_message(message.chat.id, f"Відео для дня #{day} завантажено. Відправляю в канал...")
+        
+        # Отправляем видео в канал с "Доброго ранку!"
+        bot.send_video(CHANNEL_ID, open(video_path, 'rb'), caption="Доброго ранку!")
+        
+        # Подтверждаем администратору
+        bot.send_message(message.chat.id, f"Відео для дня #{day} успішно завантажено і відправлено в канал.")
+    else:
+        bot.send_message(message.chat.id, "У вас немає доступу до цієї команди.")
+
+# Запуск бота
+bot.polling()
+
