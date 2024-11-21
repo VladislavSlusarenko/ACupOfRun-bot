@@ -1,113 +1,143 @@
+import telebot
 import os
-from telebot import TeleBot
-from datetime import datetime, timedelta
-from apscheduler.schedulers.background import BackgroundScheduler
-from config import ADMINS
-from config import bot 
-from config import admin_panel 
-VIDEO_FOLDER = "./videos"  # Путь внутри вашего проекта
-os.makedirs(VIDEO_FOLDER, exist_ok=True)
+import datetime
+from telebot import types
+from config import API_TOKEN, CHANNEL_ID, ADMINS  # Импортируем данные из config.py
+import schedule
+import time
+import threading
+from main import set_name, user_data
+from main import send_reminder_1min, send_reminder_30min, send_reminder_50min
+from main import send_grouped_stats_and_photos_hourly
+VIDEO_DIR = 'uploaded_videos'  # Папка для хранения видео
+bot = telebot.TeleBot(API_TOKEN)
 
-# Папка для хранения видео
-os.makedirs(VIDEO_FOLDER, exist_ok=True)
-# Временное хранилище для состояния администратора
-admin_state = {}
+# Переконаємося, що папка для відео існує
+if not os.path.exists(VIDEO_DIR):
+    os.makedirs(VIDEO_DIR)
 
-admin_panel.add_admin(922094773)
-print(admin_panel.get_info())
+# Словник для зберігання відео за днями
+video_data = {}
 
-# Планировщик для задач
-scheduler = BackgroundScheduler()
 
-# Команда /admin для доступа к админ панели
-@bot.message_handler(commands=['admin'])
+# Словарь для отслеживания, находится ли пользователь в админ-панели
+admin_session = {}
+
+# Команда /start
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    if user_id in ADMINS:
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True)
+        item_admin = types.KeyboardButton("Адмін")
+        item_bot = types.KeyboardButton("Бот")
+        markup.add(item_admin, item_bot)
+        bot.send_message(user_id, "Привіт, вибери, що хочеш зробити:", reply_markup=markup)
+    else:
+        bot.send_message(message.chat.id, "Привіт! Я готовий до роботи!")
+
+
+# Обработка нажатия кнопки "Адмін"
+@bot.message_handler(func=lambda message: message.text == "Адмін")
 def admin_panel(message):
     user_id = message.from_user.id
     if user_id in ADMINS:
-        bot.send_message(
-            user_id, 
-            "Ласкаво просимо в панель адміністратора!\n"
-            "Ви можете:\n"
-            "1️⃣ Завантажити відео для публікації (введіть номер дня: 1-7).\n"
-            "2️⃣ Перевірити поточні відео.\n\n"
-            "Просто введіть номер дня, щоб почати! 🎥"
-        )
-        bot.send_message(user_id, f"Зараз завантажено відео: {count_uploaded_videos()} з 7.")
-        admin_state[user_id] = {'awaiting_day': True, 'day': None}  # Стан очікування номера дня
-    else:
-        bot.send_message(user_id, "У вас немає прав для входу в панель адміністратора.")
+        # Помечаем, что пользователь в админ-панели
+        admin_session[user_id] = 'admin'
+        markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        item_upload_video = types.KeyboardButton("Загрузить видео для нового часа")
+        item_back_to_bot = types.KeyboardButton("Повернутись до бота")  # Кнопка возврата
+        markup.add(item_upload_video, item_back_to_bot)
+        bot.send_message(user_id, "Вітаємо в адмін панелі!", reply_markup=markup)
 
-# Проверка количества загруженных видео
-def count_uploaded_videos():
-    return len([f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")])
-
-# Обработка введения дня
-@bot.message_handler(func=lambda msg: msg.from_user.id in admin_state and admin_state[msg.from_user.id].get('awaiting_day'))
-def set_day_for_video(message):
+@bot.message_handler(func=lambda message: message.text == "Повернутись до бота")
+def back_to_bot(message):
     user_id = message.from_user.id
+    if user_id in ADMINS:
+        # Повертаємо адміністратора до режиму звичайного бота
+        admin_session[user_id] = 'user'
+        
+        # Видаляємо клавіатуру
+        markup = types.ReplyKeyboardRemove()
+        bot.send_message(user_id, "Тепер ти в режимі бота. Можеш працювати як звичайний користувач!", reply_markup=markup)
+        
+        # Повертаємо адміна до основного коду бота з нагадуваннями
+        send_reminder_1min()  # Це може бути, наприклад, нагадування через 1 хвилину
+        send_reminder_30min()  # Так само для інших нагадувань
+        send_reminder_50min()  # І для 50 хвилини
+
+        # Інші дії, які відбуваються після повернення адміністратора до бота:
+        # Відправка статистики та фотографій
+        send_grouped_stats_and_photos_hourly()
+
+# Відправка відео в канал
+def send_video_to_channel(day):
+    if day in video_data:
+        video_file_path = os.path.join(VIDEO_DIR, video_data[day])
+        if os.path.exists(video_file_path):
+            with open(video_file_path, 'rb') as video_file:
+                bot.send_video(CHANNEL_ID, video_file, caption="Доброго ранку!")
+            bot.send_message(ADMINS[0], f"Відео для дня #{day} успішно відправлено в канал.")
+        else:
+            bot.send_message(ADMINS[0], f"Файл відео для дня #{day} не знайдено.")
+    else:
+        bot.send_message(ADMINS[0], f"Відео для дня #{day} не знайдено в словнику video_data!")
+
+# Завдання для `schedule`
+def schedule_send_video():
+    # Отримати поточний день у році
+    current_day = datetime.datetime.now().timetuple().tm_yday
+    send_video_to_channel(current_day)
+
+# Налаштування щогодинного відправлення
+schedule.every().hour.at(":00").do(schedule_send_video)
+
+# Запуск планувальника у фоновому потоці
+def run_scheduler():
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# Завантаження відео (адмін-функція)
+@bot.message_handler(func=lambda message: message.from_user.id in ADMINS and message.text == "Завантажити відео")
+def upload_video(message):
+    bot.send_message(message.chat.id, "Введіть номер дня, для якого завантажуєте відео:")
+    bot.register_next_step_handler(message, ask_for_day)
+
+# Отримання номера дня
+def ask_for_day(message):
     try:
         day = int(message.text)
-        if 1 <= day <= 7:
-            admin_state[user_id]['day'] = day
-            admin_state[user_id]['awaiting_day'] = False
-            admin_state[user_id]['awaiting_video'] = True
-            bot.send_message(user_id, f"Чекаю відео для дня #{day} 📹")
-        else:
-            bot.send_message(user_id, "Введіть число від 1 до 7.")
-    except ValueError:
-        bot.send_message(user_id, "Будь ласка, введіть коректний номер дня (1-7).")
+        if day < 1 or day > 365:
+            raise ValueError("Номер дня має бути між 1 і 365.")
+        bot.send_message(message.chat.id, f"Надішліть відео для дня #{day}.")
+        bot.register_next_step_handler(message, handle_video, day)
+    except ValueError as e:
+        bot.send_message(message.chat.id, str(e))
+        bot.register_next_step_handler(message, ask_for_day)
 
-# Обработка загрузки видео
-@bot.message_handler(content_types=['video'])
-def handle_video_upload(message):
-    user_id = message.from_user.id
-    if user_id in admin_state and admin_state[user_id].get('awaiting_video'):
-        day = admin_state[user_id]['day']
-        video_file_id = message.video.file_id
-        video_file = bot.get_file(video_file_id)
-        try:
-            downloaded_file = bot.download_file(video_file.file_path)
-            
-            # Сохраняем видео
-            video_path = os.path.join(VIDEO_FOLDER, f"day_{day}.mp4")
-            with open(video_path, 'wb') as f:
-                f.write(downloaded_file)
-            
-            bot.send_message(user_id, f"Відео для дня #{day} успішно збережено! ✅")
-            schedule_video_post(day, video_path)
-            admin_state.pop(user_id)  # Сброс состояния администратора
-        except Exception as e:
-            bot.send_message(user_id, f"Помилка при завантаженні відео: {e}")
+# Обробка відео
+def handle_video(message, day):
+    if message.content_type == 'video':
+        video = message.video
+        file_info = bot.get_file(video.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        # Збереження відео
+        video_path = os.path.join(VIDEO_DIR, f"day_{day}.mp4")
+        with open(video_path, 'wb') as new_file:
+            new_file.write(downloaded_file)
+        
+        video_data[day] = f"day_{day}.mp4"
+        bot.send_message(message.chat.id, f"Відео для дня #{day} успішно збережено!")
     else:
-        bot.send_message(user_id, "Будь ласка, спершу виберіть день через /admin.")
+        bot.send_message(message.chat.id, "Будь ласка, надішліть відео.")
+        bot.register_next_step_handler(message, handle_video, day)
 
-# Планирование публикации видео
-def schedule_video_post(day, video_path):
-    # Устанавливаем время публикации на начало следующего часа
-    publish_time = datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    
-    # Добавляем задачу в планировщик
-    scheduler.add_job(
-        lambda: publish_video(video_path), 
-        'date',  # Используем 'date' для выполнения задачи в одно время
-        run_date=publish_time,
-        id=f"video_post_day_{day}"
-    )
-    bot.send_message(
-        'CHANNEL_ID',  # Замените на ваш канал
-        f"Відео для дня #{day} заплановано на публікацію в {publish_time.strftime('%Y-%m-%d %H:%M')}! 🚀"
-    )
-    print(f"Відео заплановано на {publish_time.strftime('%Y-%m-%d %H:%M')}")
-
-# Публикация видео
-def publish_video(video_path):
-    if os.path.exists(video_path):
-        with open(video_path, 'rb') as video_file:
-            bot.send_video('CHANNEL_ID', video_file, caption="Доброго ранку! ☀️")
-    else:
-        bot.send_message('CHANNEL_ID', "Помилка: відео не знайдено для публікації. 🚨")
+# Запуск планувальника в окремому потоці
+import threading
+scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+scheduler_thread.start()
 
 # Запуск бота
-if __name__ == "__main__":
-    scheduler.start()
-
+bot.polling()
